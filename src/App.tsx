@@ -37,6 +37,9 @@ interface Worker {
   currentJobId?: string;
 }
 
+const RESULT_QUEUE_CAP = 24;
+const RESULT_SINK_WINDOW = 10;
+
 export default function App() {
   // State
   const [messages, setMessages] = useState<Message[]>([]);
@@ -52,10 +55,16 @@ export default function App() {
   ]);
   const [requestQueue, setRequestQueue] = useState<Message[]>([]);
   const [resultQueue, setResultQueue] = useState<Message[]>([]);
+  const [completedResults, setCompletedResults] = useState<Message[]>([]);
+  const [consumePulse, setConsumePulse] = useState(0);
   
   // Stats
   const processedCount = messages.filter(m => m.status === 'completed').length;
   const pendingCount = messages.filter(m => m.status !== 'completed').length;
+  const visibleResultQueue = resultQueue.slice(0, RESULT_QUEUE_CAP);
+  const resultQueueOverflow = Math.max(0, resultQueue.length - RESULT_QUEUE_CAP);
+  const visibleCompletedResults = completedResults.slice(-RESULT_SINK_WINDOW);
+  const sinkHasHiddenHistory = completedResults.length > RESULT_SINK_WINDOW;
 
   // Actions
   const addRequest = useCallback(() => {
@@ -168,7 +177,10 @@ export default function App() {
       setResultQueue(prev => {
         if (prev.length === 0) return prev;
         const [received, ...rest] = prev;
-        setMessages(msgs => msgs.map(m => m.id === received.id ? { ...m, status: 'completed' as const, endTime: Date.now() } : m));
+        const completedAt = Date.now();
+        setMessages(msgs => msgs.map(m => m.id === received.id ? { ...m, status: 'completed' as const, endTime: completedAt } : m));
+        setCompletedResults(stack => [...stack, { ...received, status: 'completed', endTime: completedAt }]);
+        setConsumePulse(p => p + 1);
         return rest;
       });
     }, 500 + Math.random() * 500); 
@@ -257,6 +269,52 @@ export default function App() {
                   animate={{ scaleX: messages.length > 0 ? (processedCount / messages.length) : 0 }}
                   transition={{ type: 'spring', bounce: 0, duration: 0.5 }}
                 />
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5">
+                <div className="flex justify-between items-center text-[10px] font-bold mb-2">
+                  <span className="text-slate-400 uppercase tracking-wider">Result Sink (Consumed)</span>
+                  <span className="font-mono text-emerald-600">{completedResults.length} done</span>
+                </div>
+                <div className="relative flex gap-1.5 overflow-hidden h-8 items-center justify-start px-1 bg-white rounded-md py-1 border border-slate-200/70">
+                  {consumePulse > 0 && (
+                    <motion.div
+                      key={`sink-consume-pulse-${consumePulse}`}
+                      className="pointer-events-none absolute inset-y-0 right-0 w-14 bg-gradient-to-l from-transparent via-emerald-300/50 to-transparent"
+                      initial={{ x: '140%', opacity: 0 }}
+                      animate={{ x: '-140%', opacity: [0, 0.85, 0] }}
+                      transition={{ duration: 0.75, ease: 'easeOut' }}
+                    />
+                  )}
+                  {sinkHasHiddenHistory && (
+                    <motion.div
+                      className="flex-shrink-0 px-1 text-[11px] font-black tracking-tight text-emerald-400"
+                      animate={{ opacity: [0.35, 0.9, 0.35] }}
+                      transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
+                    >
+                      ...
+                    </motion.div>
+                  )}
+                  <AnimatePresence mode="popLayout" initial={false}>
+                    {visibleCompletedResults.map((msg) => (
+                      <motion.div
+                        key={`completed-${msg.id}`}
+                        layout
+                        initial={{ opacity: 0, scale: 0.65, x: 100, filter: 'blur(4px)' }}
+                        animate={{ opacity: 1, scale: 1, x: 0, filter: 'blur(0px)' }}
+                        exit={{ opacity: 0, scale: 0.85, x: -80, filter: 'blur(4px)', transition: { duration: 0.2 } }}
+                        className="flex-shrink-0 w-7 h-6 bg-emerald-100 rounded-sm border border-emerald-200 flex items-center justify-center"
+                      >
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600/70" />
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                  {completedResults.length === 0 && (
+                    <div className="flex-1 flex items-center justify-center text-[9px] text-slate-300 font-bold uppercase tracking-widest">
+                      No ACK Yet
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="max-h-[300px] overflow-y-auto pr-2 custom-scrollbar space-y-2 border-t border-slate-100 pt-3">
@@ -420,21 +478,35 @@ export default function App() {
                   <span className="font-mono text-emerald-600">{resultQueue.length} res</span>
                 </div>
                 
-                <div className="flex gap-1.5 overflow-hidden h-8 items-center justify-end px-1 bg-slate-50/50 rounded-md py-1">
+                <div className="relative flex gap-1.5 overflow-hidden h-8 items-center justify-start px-1 bg-slate-50/50 rounded-md py-1">
+                  {consumePulse > 0 && (
+                    <motion.div
+                      key={`queue-consume-sweep-${consumePulse}`}
+                      className="pointer-events-none absolute inset-y-0 right-0 w-16 bg-gradient-to-l from-transparent via-emerald-400/55 to-transparent"
+                      initial={{ x: '145%', opacity: 0 }}
+                      animate={{ x: '-150%', opacity: [0, 1, 0] }}
+                      transition={{ duration: 0.7, ease: 'easeOut' }}
+                    />
+                  )}
                   <AnimatePresence mode="popLayout" initial={false}>
-                    {resultQueue.map((msg) => (
+                    {visibleResultQueue.map((msg) => (
                       <motion.div
                         key={msg.id}
                         layout
-                        initial={{ opacity: 0, scale: 0.5, x: 300, filter: 'blur(4px)' }}
+                        initial={{ opacity: 0, scale: 0.5, x: 120, filter: 'blur(4px)' }}
                         animate={{ opacity: 1, scale: 1, x: 0, filter: 'blur(0px)' }}
-                        exit={{ opacity: 0, scale: 1.5, x: -500, filter: 'blur(8px)', transition: { duration: 0.5 } }}
+                        exit={{ opacity: 0, scale: 0.9, x: -100, filter: 'blur(4px)', transition: { duration: 0.25 } }}
                         className="flex-shrink-0 w-8 h-6 bg-emerald-500 rounded-sm shadow-sm border border-emerald-600/20 flex items-center justify-center"
                       >
                         <CheckCircle2 className="w-3 h-3 text-white/50" />
                       </motion.div>
                     ))}
                   </AnimatePresence>
+                  {resultQueueOverflow > 0 && (
+                    <div className="flex-shrink-0 px-2 h-6 rounded-sm border border-emerald-300 bg-emerald-50 text-[9px] font-bold text-emerald-700 flex items-center">
+                      +{resultQueueOverflow}
+                    </div>
+                  )}
                   {resultQueue.length === 0 && (
                     <div className="flex-1 flex items-center justify-center text-[9px] text-slate-300 font-bold uppercase tracking-widest">
                       Buffered Empty
