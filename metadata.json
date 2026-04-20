@@ -1,0 +1,6 @@
+{
+  "name": "Remix: MQ Flow Architect",
+  "description": "A visual simulation of an asynchronous Message Queue architecture featuring Producers, Workers, and Parallel Processing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
